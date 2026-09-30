@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local PDF Merger | 100% Private</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        .drag-active { border-color: #3b82f6; background-color: #eff6ff; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .sortable-ghost { opacity: 0.4; background: #c8ebfb; }
+        .sortable-drag { cursor: grabbing; }
+        .file-item { cursor: grab; }
+        .file-item:active { cursor: grabbing; }
+        .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen flex flex-col font-sans">
+
+    <header class="bg-white border-b border-gray-200 py-6">
+        <div class="max-w-3xl mx-auto px-4 text-center">
+            <h1 class="text-3xl font-bold text-gray-900 tracking-tight">Local PDF Merger</h1>
+            <p class="mt-2 text-gray-600">Merge your PDF files directly in your browser.</p>
+            
+            <div class="mt-4 inline-flex items-center gap-2 bg-green-50 text-green-700 px-4 py-2 rounded-full text-sm font-medium border border-green-200">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                <span>100% Local. Files never leave your device.</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-3xl mx-auto px-4 py-8 w-full">
+        
+        <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center transition-all cursor-pointer hover:border-blue-400 hover:bg-blue-50">
+            <input type="file" id="fileInput" multiple accept=".pdf" class="hidden">
+            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <p class="mt-4 text-lg font-medium text-gray-700">Drag and drop PDF files here</p>
+            <p class="mt-1 text-sm text-gray-500">or click to select files</p>
+        </div>
+
+        <div id="fileList" class="mt-6 space-y-3 hidden">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider">Selected files (drag to reorder)</h3>
+                <button id="clearAllBtn" class="text-sm text-red-600 hover:text-red-700 font-medium">Clear all</button>
+            </div>
+            <div id="fileItems" class="space-y-2"></div>
+        </div>
+
+        <div class="mt-8 text-center hidden" id="actionArea">
+            <button id="mergeBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg shadow-md transition-colors flex items-center gap-2 mx-auto">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                Merge and download
+            </button>
+            <p id="statusText" class="mt-3 text-sm text-gray-500"></p>
+        </div>
+
+    </main>
+
+    <footer class="bg-white border-t border-gray-200 py-6 mt-auto">
+        <div class="max-w-3xl mx-auto px-4 text-center text-sm text-gray-500">
+            <p>Built with <a href="https://pdf-lib.js.org/" target="_blank" class="text-blue-600 hover:underline">pdf-lib</a> and <a href="https://sortablejs.github.io/Sortable/" target="_blank" class="text-blue-600 hover:underline">SortableJS</a>. No data is sent to any server.</p>
+        </div>
+    </footer>
+
+    <script>
+        const { PDFDocument } = PDFLib;
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const fileItems = document.getElementById('fileItems');
+        const actionArea = document.getElementById('actionArea');
+        const mergeBtn = document.getElementById('mergeBtn');
+        const statusText = document.getElementById('statusText');
+        const clearAllBtn = document.getElementById('clearAllBtn');
+
+        let selectedFiles = [];
+        let sortableInstance = null;
+
+        // VIKTIGT: Förhindra att webbläsaren öppnar PDF-filer när de släpps var som helst på sidan
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Hantera visuell feedback när filer dras över dropZone
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.add('drag-active');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.remove('drag-active');
+            }, false);
+        });
+
+        dropZone.addEventListener('drop', handleDrop, false);
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            const newFiles = Array.from(files).filter(file => file.type === 'application/pdf');
+            
+            if (newFiles.length === 0) {
+                alert('Please select PDF files only.');
+                return;
+            }
+
+            selectedFiles = [...selectedFiles, ...newFiles];
+            renderFileList();
+        }
+
+        function renderFileList() {
+            fileItems.innerHTML = '';
+            
+            if (selectedFiles.length > 0) {
+                fileList.classList.remove('hidden');
+                actionArea.classList.remove('hidden');
+            } else {
+                fileList.classList.add('hidden');
+                actionArea.classList.add('hidden');
+            }
+
+            selectedFiles.forEach((file, index) => {
+                const sizeInKB = (file.size / 1024).toFixed(1);
+                const div = document.createElement('div');
+                div.className = 'file-item flex items-center justify-between bg-white p-3 rounded-lg border border-gray-200 shadow-sm fade-in hover:shadow-md transition-shadow';
+                div.setAttribute('data-index', index);
+                div.innerHTML = `
+                    <div class="flex items-center gap-3 overflow-hidden flex-grow">
+                        <div class="drag-handle text-gray-400 hover:text-gray-600 p-1" title="Drag to reorder">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path>
+                            </svg>
+                        </div>
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <span class="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-1 rounded">${index + 1}</span>
+                        </div>
+                        <svg class="w-6 h-6 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V6.414A2 2 0 0016.414 5L14 2.586A2 2 0 0012.586 2H9z"/><path d="M3 8a2 2 0 012-2v10h8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+                        <div class="truncate">
+                            <p class="text-sm font-medium text-gray-900 truncate">${file.name}</p>
+                            <p class="text-xs text-gray-500">${sizeInKB} KB</p>
+                        </div>
+                    </div>
+                    <button onclick="removeFile(${index})" class="text-gray-400 hover:text-red-500 transition-colors p-1 ml-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                `;
+                fileItems.appendChild(div);
+            });
+
+            initSortable();
+        }
+
+        function initSortable() {
+            if (sortableInstance) {
+                sortableInstance.destroy();
+            }
+
+            sortableInstance = Sortable.create(fileItems, {
+                animation: 150,
+                handle: '.drag-handle',
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                onEnd: function(evt) {
+                    const oldIndex = evt.oldIndex;
+                    const newIndex = evt.newIndex;
+                    
+                    if (oldIndex !== newIndex) {
+                        const movedItem = selectedFiles.splice(oldIndex, 1)[0];
+                        selectedFiles.splice(newIndex, 0, movedItem);
+                        renderFileList();
+                    }
+                }
+            });
+        }
+
+        window.removeFile = function(index) {
+            selectedFiles.splice(index, 1);
+            renderFileList();
+        };
+
+        clearAllBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to remove all files?')) {
+                selectedFiles = [];
+                renderFileList();
+                fileInput.value = '';
+            }
+        });
+
+        mergeBtn.addEventListener('click', async () => {
+            if (selectedFiles.length < 2) {
+                alert('You need at least two PDF files to merge them.');
+                return;
+            }
+
+            mergeBtn.disabled = true;
+            mergeBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            statusText.textContent = 'Processing... (This happens locally on your device)';
+            statusText.className = 'mt-3 text-sm text-gray-500';
+
+            try {
+                const mergedPdf = await PDFDocument.create();
+
+                for (const file of selectedFiles) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await PDFDocument.load(arrayBuffer);
+                    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                    copiedPages.forEach((page) => mergedPdf.addPage(page));
+                }
+
+                const pdfBytes = await mergedPdf.save();
+                
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `merged_${new Date().getTime()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                statusText.textContent = 'Done! Download has started.';
+                statusText.className = 'mt-3 text-sm text-green-600 font-medium';
+
+            } catch (error) {
+                console.error(error);
+                statusText.textContent = 'An error occurred. Please make sure the files are valid PDFs.';
+                statusText.className = 'mt-3 text-sm text-red-600 font-medium';
+            } finally {
+                mergeBtn.disabled = false;
+                mergeBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+    </script>
+</body>
+</html>
